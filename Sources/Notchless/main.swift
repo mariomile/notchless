@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var divider: Divider!
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    private var pointerWatch: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // macOS tucks away the leftmost items first when the bar is full, so Notchless has to sit on the
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverZone.onHover = { [weak self] in
             guard let self, !self.model.isOpen else { return }
             self.open()
+            self.watchPointerUntilItLeaves()
         }
         applySettings()
         DispatchQueue.main.async { self.divider.refit() }
@@ -225,7 +227,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMonitors()
     }
 
+    /// Opened by hovering, the notch closes on its own once the pointer has been outside it for a moment.
+    /// Polls only while that notch is open; a click-opened notch stays until you click away.
+    private func watchPointerUntilItLeaves() {
+        pointerWatch?.invalidate()
+        var outsideSince: Date?
+        pointerWatch = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self, self.model.isOpen else { self?.pointerWatch?.invalidate(); return }
+            let size = self.model.openSize
+            let notch = NSRect(x: self.panel.frame.midX - size.width / 2, y: self.screen.frame.maxY - size.height,
+                               width: size.width, height: size.height).insetBy(dx: -8, dy: -8)
+            if notch.contains(NSEvent.mouseLocation) {
+                outsideSince = nil
+            } else if let since = outsideSince {
+                if Date().timeIntervalSince(since) >= 2.5 { self.close() }
+            } else {
+                outsideSince = Date()
+            }
+        }
+    }
+
     private func close() {
+        pointerWatch?.invalidate()
+        pointerWatch = nil
         guard model.isOpen else { return }
         model.isOpen = false
         model.hoveredID = nil
