@@ -9,6 +9,8 @@ mkdir -p "$APP/Contents/MacOS"
 cp .build/release/Notchless "$APP/Contents/MacOS/"
 strip -x "$APP/Contents/MacOS/Notchless"
 cp Info.plist "$APP/Contents/"
+mkdir -p "$APP/Contents/Resources"
+cp Icon/AppIcon.icns "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 if [[ "$1" == "--install" ]]; then
   pkill -x Notchless || true
