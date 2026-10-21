@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onShowOnboarding = { [weak self] in self?.showOnboarding() }
         hoverZone.onHover = { [weak self] in
             guard let self, !self.model.isOpen else { return }
-            self.open()
+            self.open(byHover: true)
             self.watchPointerUntilItLeaves()
         }
         applySettings()
@@ -211,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Open / close
 
-    private func open() {
+    private func open(byHover: Bool = false) {
         guard model.movingID == nil else { return }
         // The screen the person is looking at. The button's own window can report another display,
         // e.g. while the icon itself is tucked away, and the notch would open there.
@@ -220,8 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.notch = notchSize(of: screen)
         model.trusted = MenuExtras.isTrusted
         model.hoveredID = nil
+        model.query = ""
+        model.selectedID = nil
         layoutPanel()
-        panel.makeKeyAndOrderFront(nil)
+        // Opened by hovering, the notch must not steal the keyboard from whatever you're typing in.
+        if byHover { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
         DispatchQueue.main.async { self.model.isOpen = true }
         scan()
         installMonitors()
@@ -277,10 +280,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitors = [
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() },
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                if event.keyCode == 53 { self?.close(); return nil }
-                return event
+                self?.handleKey(event) ?? event
             },
         ].compactMap { $0 }
+    }
+
+    /// Typing searches, arrows move between tiles, Return opens, Esc clears the search and then closes.
+    private func handleKey(_ event: NSEvent) -> NSEvent? {
+        guard model.isOpen else { return event }
+        switch event.keyCode {
+        case 53:
+            if model.query.isEmpty { close() } else { model.type("") }
+        case 36, 76:
+            if let extra = model.ordered.first(where: { $0.id == model.selectedID }) { model.onSelect(extra) }
+        case 51:
+            model.type(String(model.query.dropLast()))
+        case 123: model.moveSelection(-1)
+        case 124: model.moveSelection(1)
+        case 125: model.moveSelection(model.columns)
+        case 126: model.moveSelection(-model.columns)
+        default:
+            guard event.modifierFlags.intersection([.command, .control]).isEmpty,
+                  let text = event.characters, !text.isEmpty,
+                  text.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(.punctuationCharacters).union(.whitespaces).contains($0) })
+            else { return event }
+            model.type(model.query + text)
+        }
+        return nil
     }
 
     // MARK: - Geometry

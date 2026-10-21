@@ -6,6 +6,10 @@ final class NotchModel: ObservableObject {
     @Published var extras: [MenuExtra] = []
     @Published var trusted = true
     @Published var hoveredID: String?
+    /// Typed while the notch is open; filters items by name and detail.
+    @Published var query = ""
+    /// The item the arrow keys are on; Return opens it.
+    @Published var selectedID: String?
     var notch = CGSize(width: 200, height: 32)
     @Published var movingID: String?
     @Published var message: String?
@@ -43,9 +47,33 @@ final class NotchModel: ObservableObject {
     var onRefresh: () -> Void = {}
     var onShowOnboarding: () -> Void = {}
 
-    var hidden: [MenuExtra] { extras.filter(\.isHidden) }
-    /// Items already in the menu bar, shown in the panel only when the setting allows it.
-    var visible: [MenuExtra] { showVisible ? extras.filter { !$0.isHidden } : [] }
+    private var matches: [MenuExtra] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return extras }
+        return extras.filter { $0.name.localizedCaseInsensitiveContains(q) || $0.detail.localizedCaseInsensitiveContains(q) }
+    }
+
+    var hidden: [MenuExtra] { matches.filter(\.isHidden) }
+    /// Items already in the menu bar, shown in the panel only when the setting allows it, or when searching.
+    var visible: [MenuExtra] { showVisible || !query.isEmpty ? matches.filter { !$0.isHidden } : [] }
+    /// Tiles in on-screen order, for the arrow keys.
+    var ordered: [MenuExtra] { hidden + visible }
+    var hiddenTotal: Int { extras.filter(\.isHidden).count }
+
+    /// Arrow keys: left and right step one tile, up and down a row.
+    func moveSelection(_ delta: Int) {
+        let items = ordered
+        guard !items.isEmpty else { return }
+        hoveredID = nil
+        let current = items.firstIndex { $0.id == selectedID } ?? -1
+        selectedID = items[min(max(current + delta, 0), items.count - 1)].id
+    }
+
+    func type(_ text: String) {
+        query = text
+        hoveredID = nil
+        selectedID = ordered.first?.id
+    }
 
     enum Metric {
         static let tileWidth: CGFloat = 64
@@ -159,7 +187,13 @@ struct NotchRoot: View {
 
     private var earLabels: some View {
         HStack {
-            Label("\(model.hidden.count) hidden", systemImage: "eye.slash.fill")
+            if model.query.isEmpty {
+                Label("\(model.hiddenTotal) hidden", systemImage: "eye.slash.fill")
+            } else {
+                Label {
+                    Text(model.query).foregroundStyle(.white) + Text("▍").foregroundStyle(.orange)
+                } icon: { Image(systemName: "magnifyingglass") }
+            }
             Spacer(minLength: model.notch.width + 24)
             HStack(spacing: 8) {
                 Text("\(model.extras.count) items")
@@ -184,7 +218,7 @@ struct NotchRoot: View {
                 section("Behind the notch", model.hidden, offset: 0)
             }
             if model.hidden.isEmpty && model.visible.isEmpty {
-                Text("Nothing is hidden. Everything fits in your menu bar.")
+                Text(model.query.isEmpty ? "Nothing is hidden. Everything fits in your menu bar." : "No matches for “\(model.query)”")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(maxWidth: .infinity)
@@ -216,8 +250,8 @@ struct NotchRoot: View {
     }
 
     private var caption: some View {
-        let hovered = model.extras.first { $0.id == model.hoveredID }
-        return Text(hovered?.detail ?? "Click to open  ·  right-click to hide or show  ·  esc to close")
+        let hovered = model.extras.first { $0.id == (model.hoveredID ?? model.selectedID) }
+        return Text(hovered?.detail ?? "Type to search  ·  ↩ to open  ·  right-click to hide or show  ·  esc to close")
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(.white.opacity(hovered == nil ? 0.28 : 0.7))
             .lineLimit(1)
@@ -225,7 +259,7 @@ struct NotchRoot: View {
             .frame(height: 18)
             .id(hovered?.id ?? "idle")
             .transition(.opacity.combined(with: .offset(y: 3)))
-            .animation(.easeOut(duration: 0.15), value: model.hoveredID)
+            .animation(.easeOut(duration: 0.15), value: model.hoveredID ?? model.selectedID)
             .opacity(model.isOpen ? 1 : 0)
     }
 }
@@ -237,7 +271,7 @@ struct Tile: View {
     let index: Int
     @ObservedObject var model: NotchModel
 
-    private var hovered: Bool { model.hoveredID == extra.id }
+    private var hovered: Bool { model.hoveredID == extra.id || (model.hoveredID == nil && model.selectedID == extra.id) }
 
     var body: some View {
         Button { model.onSelect(extra) } label: {
