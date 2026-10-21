@@ -66,6 +66,8 @@ final class Divider {
         guard isEnabled, let anchor, let screen = item.button?.window?.screen,
               let notch = MenuExtras.notchRange(on: screen) else { return }
         let boundary = screen.frame.minX + notch.upperBound + 30
+        // If macOS has tucked the icon itself away, widening it would only make that worse.
+        guard anchor > boundary + Self.collapsedLength else { collapseKeepingState(); return }
         // Never wider than the room right of the notch minus space for the system items.
         let maxLength = screen.frame.maxX - boundary - 160
         let length = max(Self.collapsedLength, min(anchor - boundary - slack, maxLength))
@@ -81,6 +83,10 @@ final class Divider {
         guard abs(f.midY - chevron.midY) < 20, f.maxX <= chevron.maxX + 2 else { return }
         slack += 40
         expand()
+    }
+
+    private func collapseKeepingState() {
+        if abs(item.length - Self.collapsedLength) > 1 { setLength(Self.collapsedLength) }
     }
 
     /// The symbol sits at the right end; the rest of the width is empty space.

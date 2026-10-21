@@ -7,7 +7,9 @@ final class NotchPanel: NSPanel {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let autosaveName = "NotchlessToggle"
+    // A fresh name gives the icon a fresh slot: macOS keeps the slot of a name it already knows,
+    // and the old one sat on the left, where a full bar hides first.
+    private static let autosaveName = "NotchlessButton"
 
     private var statusItem: NSStatusItem!
     private let model = NotchModel()
@@ -209,7 +211,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func open() {
         guard model.movingID == nil else { return }
-        screen = statusItem.button?.window?.screen ?? NSScreen.main ?? screen
+        // The screen the person is looking at. The button's own window can report another display,
+        // e.g. while the icon itself is tucked away, and the notch would open there.
+        let mouse = NSEvent.mouseLocation
+        screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? screen
         model.notch = notchSize(of: screen)
         model.trusted = MenuExtras.isTrusted
         model.hoveredID = nil
