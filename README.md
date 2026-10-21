@@ -16,4 +16,4 @@ Builds a release, ad-hoc signs it and installs it into `~/Applications`. Ad-hoc 
 
 The app icon is drawn by `Icon/make-icon.swift`; run `swift Icon/make-icon.swift` to regenerate `Icon/AppIcon.icns`.
 
-Right-click the button for Refresh and Quit. Cmd-drag moves it.
+Right-click the button for Settings, Refresh and Quit. The button also works as the divider: items to its left are tucked away behind the notch, items to its right stay in the menu bar. Switch them in Settings or by right-clicking a tile, or Cmd-drag them across the button yourself.
