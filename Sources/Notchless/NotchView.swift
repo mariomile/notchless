@@ -40,6 +40,8 @@ final class NotchModel: ObservableObject {
     var onSetHidden: (MenuExtra, Bool) -> Void = { _, _ in }
     var onOpenSettings: () -> Void = {}
     var onSettingsChanged: () -> Void = {}
+    var onRefresh: () -> Void = {}
+    var onShowOnboarding: () -> Void = {}
 
     var hidden: [MenuExtra] { extras.filter(\.isHidden) }
     /// Items already in the menu bar, shown in the panel only when the setting allows it.

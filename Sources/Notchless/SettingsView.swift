@@ -44,6 +44,7 @@ struct SettingsView: View {
 
             Section("General") {
                 Toggle("Launch at login", isOn: $model.launchAtLogin)
+                Button("Run Setup Again…") { model.onShowOnboarding() }
             }
         }
         .formStyle(.grouped)

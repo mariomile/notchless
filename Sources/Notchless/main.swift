@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hoverZone = HoverZone()
     private var divider: Divider!
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // macOS tucks away the leftmost items first when the bar is full, so Notchless has to sit on the
@@ -49,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onSetHidden = { [weak self] extra, hidden in self?.setHidden(extra, hidden) }
         model.onOpenSettings = { [weak self] in self?.openSettings() }
         model.onSettingsChanged = { [weak self] in self?.applySettings() }
+        model.onRefresh = { [weak self] in self?.scan() }
+        model.onShowOnboarding = { [weak self] in self?.showOnboarding() }
         hoverZone.onHover = { [weak self] in
             guard let self, !self.model.isOpen else { return }
             self.open()
@@ -63,13 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.divider.refit()
         }
 
-        if !MenuExtras.isTrusted { MenuExtras.requestTrust() }
+        if UserDefaults.standard.bool(forKey: "onboardingDone") {
+            if !MenuExtras.isTrusted { MenuExtras.requestTrust() }
+        } else {
+            showOnboarding()
+        }
     }
 
     @objc private func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+            menu.addItem(withTitle: "Setup Guide…", action: #selector(showOnboarding), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r").target = self
             menu.addItem(.separator())
             menu.addItem(withTitle: "Quit Notchless", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -107,6 +115,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate()
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Onboarding
+
+    @objc private func showOnboarding() {
+        close()
+        settingsWindow?.close()
+        model.trusted = MenuExtras.isTrusted
+        scan()
+        if onboardingWindow == nil {
+            let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView],
+                                  backing: .buffered, defer: false)
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = NSHostingView(rootView: OnboardingView(model: model) { [weak self] choices in
+                self?.finishOnboarding(choices)
+            })
+            window.isReleasedWhenClosed = false
+            window.center()
+            onboardingWindow = window
+        }
+        NSApp.activate()
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Applies the item choices one move at a time, re-reading the menu bar after each, then shows the result.
+    private func finishOnboarding(_ choices: [String: Bool]) {
+        UserDefaults.standard.set(true, forKey: "onboardingDone")
+        onboardingWindow?.close()
+        let wanted = { (extra: MenuExtra) in extra.canMove && choices[extra.id].map { $0 != extra.isHidden } == true }
+        let total = model.extras.filter(wanted).count
+        guard total > 0 else { open(); return }
+
+        // Hiding something that fits today needs the Notchless icon to widen up to the notch.
+        if model.extras.contains(where: { wanted($0) && !$0.isHidden }) { model.dividerEnabled = true }
+        model.movingID = "onboarding"
+        let screen = screen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self else { return }
+            let divider = self.divider!
+            self.scanQueue.async {
+                var failed: [String: String] = [:]
+                for _ in 0..<(total * 2) {
+                    let frame = DispatchQueue.main.sync { divider.frame }
+                    guard let next = MenuExtras.scan(screen: screen, divider: frame)
+                        .first(where: { wanted($0) && failed[$0.id] == nil }) else { break }
+                    if case .failure(let failure) = MenuBarMover.setHidden(choices[next.id]!, next, divider: divider) {
+                        failed[next.id] = "\(next.name): \(failure)"
+                        if case .menuBarHidden = failure { break }
+                    }
+                    usleep(800_000)
+                }
+                DispatchQueue.main.async {
+                    self.model.movingID = nil
+                    if failed.isEmpty {
+                        self.open()
+                    } else {
+                        self.model.message = "Some items didn't move. " + failed.values.sorted().joined(separator: " ")
+                        self.openSettings()
+                    }
+                }
+            }
+        }
     }
 
     private func setHidden(_ extra: MenuExtra, _ hidden: Bool) {
