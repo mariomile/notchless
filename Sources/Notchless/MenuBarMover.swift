@@ -69,6 +69,7 @@ enum MenuBarMover {
     private static func post(_ type: CGEventType, _ point: CGPoint) {
         let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
         event?.flags = .maskCommand
+        if type != .mouseMoved { event?.setIntegerValueField(.mouseEventClickState, value: 1) }
         event?.post(tap: .cghidEventTap)
     }
 

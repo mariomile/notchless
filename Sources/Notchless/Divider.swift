@@ -34,6 +34,7 @@ final class Divider {
 
     /// Collapses, measures where the button's right edge sits, then widens from there.
     func refit() {
+        slack = 0
         collapse()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, let window = self.item.button?.window else { return }
@@ -78,11 +79,17 @@ final class Divider {
 
     /// If macOS tucked the button itself away, it was too wide: give some room back.
     private func backOffIfOverflowed() {
-        guard isExpanded, slack < 200, let chevron = MenuExtras.overflowButton() else { return }
+        guard isExpanded, slack < 200 else { return }
         let f = frame
-        guard abs(f.midY - chevron.midY) < 20, f.maxX <= chevron.maxX + 2 else { return }
-        slack += 40
-        expand()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let chevron = MenuExtras.overflowButton(),
+                  abs(f.midY - chevron.midY) < 20, f.maxX <= chevron.maxX + 2 else { return }
+            DispatchQueue.main.async {
+                guard let self, self.isExpanded else { return }
+                self.slack += 40
+                self.expand()
+            }
+        }
     }
 
     private func collapseKeepingState() {

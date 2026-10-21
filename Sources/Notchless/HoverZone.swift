@@ -13,8 +13,9 @@ final class HoverZone {
 
         let rect = NSRect(x: screen.frame.minX + range.lowerBound, y: screen.frame.maxY - screen.safeAreaInsets.top,
                           width: range.upperBound - range.lowerBound, height: screen.safeAreaInsets.top)
-        let panel = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = StripPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
+        panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
@@ -24,6 +25,11 @@ final class HoverZone {
         panel.orderFrontRegardless()
         window = panel
     }
+}
+
+/// Stays over the menu bar, where AppKit would otherwise push it down.
+private final class StripPanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 private final class HoverView: NSView {

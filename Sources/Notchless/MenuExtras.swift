@@ -19,8 +19,11 @@ struct MenuExtra: Identifiable {
         let element = element
         DispatchQueue.global(qos: .userInitiated).async {
             AXUIElementSetMessagingTimeout(element, 0.5)
-            if AXUIElementPerformAction(element, kAXPressAction as CFString) == .actionUnsupported {
-                AXUIElementPerformAction(element, kAXShowMenuAction as CFString)
+            var result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+            if result == .actionUnsupported { result = AXUIElementPerformAction(element, kAXShowMenuAction as CFString) }
+            // -25204 (cannotComplete) is what a menu that opened and is now tracking the mouse returns.
+            if result != .success && result.rawValue != -25204 {
+                log.error("press failed for \(name, privacy: .public): AXError \(result.rawValue)")
             }
         }
     }
@@ -43,7 +46,7 @@ enum MenuExtras {
         for app in NSWorkspace.shared.runningApplications
         where app.processIdentifier != me && app.bundleIdentifier != Bundle.main.bundleIdentifier {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
-            AXUIElementSetMessagingTimeout(appElement, 0.1)
+            AXUIElementSetMessagingTimeout(appElement, 0.25)
             guard let bar: AXUIElement = attribute(appElement, "AXExtrasMenuBar") else { continue }
 
             let isSystem = app.bundleIdentifier == "com.apple.MenuBarAgent"
@@ -75,7 +78,7 @@ enum MenuExtras {
         let notch = notchRange(on: screen)
         return found
             .map { extra in
-                let behindNotch = notch.map { extra.frame.minX < $0.upperBound && extra.frame.maxX > $0.lowerBound } ?? false
+                let behindNotch = notch.map { extra.frame.minX < $0.upperBound + screen.frame.minX && extra.frame.maxX > $0.lowerBound + screen.frame.minX } ?? false
                 let collapsed = hiddenButtonMaxX.map { extra.frame.maxX <= $0 + 2 } ?? false
                 let offscreen = extra.frame.maxX <= 0 || extra.frame.width == 0
                 let leftOfDivider = divider.map { $0 != .zero && extra.frame.maxX <= $0.minX + 2 && abs(extra.frame.midY - $0.midY) < 20 } ?? false

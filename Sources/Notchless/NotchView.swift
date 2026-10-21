@@ -4,6 +4,8 @@ import SwiftUI
 final class NotchModel: ObservableObject {
     @Published var isOpen = false
     @Published var extras: [MenuExtra] = []
+    /// False until the first read of the menu bar has come back.
+    @Published var scanned = false
     @Published var trusted = true
     @Published var hoveredID: String?
     /// Typed while the notch is open; filters items by name and detail.
@@ -175,8 +177,14 @@ struct NotchRoot: View {
             earLabels
             if !model.trusted {
                 PermissionCard()
-            } else if model.extras.isEmpty {
+            } else if model.extras.isEmpty && !model.scanned {
                 ProgressView().controlSize(.small).tint(.white).frame(height: 60)
+            } else if model.extras.isEmpty {
+                Text("No menu bar items found. If you just allowed Accessibility, quit and reopen Notchless.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .frame(height: 60)
             } else {
                 grids
             }

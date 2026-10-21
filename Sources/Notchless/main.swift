@@ -4,6 +4,8 @@ import SwiftUI
 /// Borderless panel that sits over the notch. It can take Esc without activating the app.
 final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+    /// AppKit keeps windows out of the menu bar; this one has to sit over it.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -23,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var pointerWatch: Timer?
+    /// True from open() until close(); `model.isOpen` follows one tick later.
+    private var shown = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // macOS tucks away the leftmost items first when the bar is full, so Notchless has to sit on the
@@ -56,7 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onRefresh = { [weak self] in self?.scan() }
         model.onShowOnboarding = { [weak self] in self?.showOnboarding() }
         hoverZone.onHover = { [weak self] in
-            guard let self, !self.model.isOpen else { return }
+            log.info("hover on notch, open \(self?.model.isOpen ?? false)")
+            guard let self, !self.shown else { return }
             self.open(byHover: true)
             self.watchPointerUntilItLeaves()
         }
@@ -78,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func statusClicked() {
+        log.info("status item clicked, event \(NSApp.currentEvent?.type.rawValue ?? 0), shown \(self.shown), moving \(self.model.movingID ?? "-", privacy: .public)")
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
@@ -93,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle()
     }
 
-    private func toggle() { model.isOpen ? close() : open() }
+    private func toggle() { shown ? close() : open() }
 
     @objc private func refresh() { scan() }
 
@@ -164,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.scanQueue.async {
                 var failed: [String: String] = [:]
                 for _ in 0..<(total * 2) {
-                    let frame = DispatchQueue.main.sync { divider.frame }
+                    let frame = DispatchQueue.main.sync { self.model.dividerEnabled ? divider.frame : nil }
                     guard let next = MenuExtras.scan(screen: screen, divider: frame)
                         .first(where: { wanted($0) && failed[$0.id] == nil }) else { break }
                     if case .failure(let failure) = MenuBarMover.setHidden(choices[next.id]!, next, divider: divider) {
@@ -212,20 +218,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Open / close
 
     private func open(byHover: Bool = false) {
-        guard model.movingID == nil else { return }
+        guard model.movingID == nil else { log.error("open refused: moving \(self.model.movingID ?? "-")"); return }
         // The screen the person is looking at. The button's own window can report another display,
         // e.g. while the icon itself is tucked away, and the notch would open there.
         let mouse = NSEvent.mouseLocation
-        screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? screen
+        screen = NSScreen.screens.first { MenuExtras.notchRange(on: $0) != nil }
+            ?? NSScreen.screens.first { $0.frame.insetBy(dx: -1, dy: -1).contains(mouse) }
+            ?? NSScreen.main ?? screen
         model.notch = notchSize(of: screen)
         model.trusted = MenuExtras.isTrusted
         model.hoveredID = nil
         model.query = ""
         model.selectedID = nil
         layoutPanel()
+        log.info("open byHover \(byHover) on \(self.screen.localizedName, privacy: .public) panel \(self.panel.frame.debugDescription, privacy: .public)")
         // Opened by hovering, the notch must not steal the keyboard from whatever you're typing in.
         if byHover { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
-        DispatchQueue.main.async { self.model.isOpen = true }
+        shown = true
+        // One tick later, so the notch animates open from its closed shape.
+        DispatchQueue.main.async { if self.shown { self.model.isOpen = true } }
         scan()
         installMonitors()
     }
@@ -236,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pointerWatch?.invalidate()
         var outsideSince: Date?
         pointerWatch = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            guard let self, self.model.isOpen else { self?.pointerWatch?.invalidate(); return }
+            guard let self, self.shown else { self?.pointerWatch?.invalidate(); return }
             let size = self.model.openSize
             let notch = NSRect(x: self.panel.frame.midX - size.width / 2, y: self.screen.frame.maxY - size.height,
                                width: size.width, height: size.height).insetBy(dx: -8, dy: -8)
@@ -253,13 +264,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func close() {
         pointerWatch?.invalidate()
         pointerWatch = nil
-        guard model.isOpen else { return }
+        guard shown else { return }
+        log.info("close")
+        shown = false
         model.isOpen = false
         model.hoveredID = nil
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            guard let self, !self.model.isOpen else { return }
+            guard let self, !self.shown else { return }
             self.panel.orderOut(nil)
         }
     }
@@ -268,17 +281,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard MenuExtras.isTrusted else { model.trusted = false; return }
         let screen = screen
         if model.movingID == nil { divider.expand() }
-        let dividerFrame = divider.frame
+        let dividerFrame = model.dividerEnabled ? divider.frame : nil
         scanQueue.async { [weak self] in
             let extras = MenuExtras.scan(screen: screen, divider: dividerFrame)
-            DispatchQueue.main.async { self?.model.extras = extras }
+            DispatchQueue.main.async {
+                self?.model.extras = extras
+                self?.model.scanned = true
+            }
         }
     }
 
     private func installMonitors() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = [
-            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() },
+            // A click anywhere else closes the notch. The status bar delivers a click on our own icon to
+            // this monitor too, and letting it close here would make the icon's mouse-up reopen at once.
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self else { return }
+                if let button = self.statusItem.button, let window = button.window,
+                   window.frame.contains(NSEvent.mouseLocation) { return }
+                self.close()
+            },
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 self?.handleKey(event) ?? event
             },
@@ -287,7 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Typing searches, arrows move between tiles, Return opens, Esc clears the search and then closes.
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        guard model.isOpen else { return event }
+        guard shown else { return event }
+        log.info("key \(event.keyCode) query '\(self.model.query, privacy: .public)'")
         switch event.keyCode {
         case 53:
             if model.query.isEmpty { close() } else { model.type("") }
