@@ -11,6 +11,8 @@ struct MenuExtra: Identifiable {
     let tint: NSColor
     let frame: CGRect
     let isHidden: Bool
+    /// Clock and Control Centre are pinned by macOS and cannot be moved.
+    let canMove: Bool
     let element: AXUIElement
 
     func open() {
@@ -33,7 +35,7 @@ enum MenuExtras {
     }
 
     /// Reads every menu extra of every running app. Runs off the main thread.
-    static func scan(screen: NSScreen) -> [MenuExtra] {
+    static func scan(screen: NSScreen, divider: CGRect? = nil) -> [MenuExtra] {
         let me = ProcessInfo.processInfo.processIdentifier
         var found: [MenuExtra] = []
         var hiddenButtonMaxX: CGFloat?
@@ -62,22 +64,25 @@ enum MenuExtras {
                     tint: icon.map(averageColor) ?? NSColor(white: 0.75, alpha: 1),
                     frame: frame(of: item),
                     isHidden: false,
+                    canMove: !(isSystem && (identifier.hasSuffix(".clock") || identifier.hasSuffix(".controlcenter"))),
                     element: item
                 ))
             }
         }
 
-        // An item is hidden when it sits behind the notch, or when macOS stacked it
-        // under its own "Show Hidden Menu Bar Items" overflow button.
+        // An item is hidden when it sits behind the notch, when macOS stacked it under its own
+        // "Show Hidden Menu Bar Items" overflow button, or when it's left of the Notchless divider.
         let notch = notchRange(on: screen)
         return found
             .map { extra in
                 let behindNotch = notch.map { extra.frame.minX < $0.upperBound && extra.frame.maxX > $0.lowerBound } ?? false
                 let collapsed = hiddenButtonMaxX.map { extra.frame.maxX <= $0 + 2 } ?? false
                 let offscreen = extra.frame.maxX <= 0 || extra.frame.width == 0
+                let leftOfDivider = divider.map { $0 != .zero && extra.frame.maxX <= $0.minX + 2 && abs(extra.frame.midY - $0.midY) < 20 } ?? false
                 return MenuExtra(id: extra.id, name: extra.name, detail: extra.detail, icon: extra.icon,
                                  symbol: extra.symbol, tint: extra.tint, frame: extra.frame,
-                                 isHidden: behindNotch || collapsed || offscreen, element: extra.element)
+                                 isHidden: behindNotch || collapsed || offscreen || leftOfDivider, canMove: extra.canMove,
+                                 element: extra.element)
             }
             .sorted { ($0.frame.minX, $0.name) < ($1.frame.minX, $1.name) }
     }
@@ -86,6 +91,17 @@ enum MenuExtras {
         guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea,
               right.minX > left.maxX else { return nil }
         return (left.maxX - screen.frame.minX)...(right.minX - screen.frame.minX)
+    }
+
+    /// The frame of macOS's own "Show Hidden Menu Bar Items" chevron. Items to its left are hidden.
+    static func overflowButton() -> CGRect? {
+        guard let agent = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) else { return nil }
+        let appElement = AXUIElementCreateApplication(agent.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.2)
+        guard let bar: AXUIElement = attribute(appElement, "AXExtrasMenuBar") else { return nil }
+        return (attribute(bar, kAXChildrenAttribute) as [AXUIElement]? ?? [])
+            .first { (attribute($0, kAXRoleAttribute) as String?) == "AXButton" }
+            .map(frame(of:))
     }
 
     // MARK: - Accessibility helpers
@@ -114,7 +130,7 @@ enum MenuExtras {
         return value as? T
     }
 
-    private static func frame(of element: AXUIElement) -> CGRect {
+    static func frame(of element: AXUIElement) -> CGRect {
         var origin = CGPoint.zero, size = CGSize.zero
         if let value: AXValue = attribute(element, kAXPositionAttribute) { AXValueGetValue(value, .cgPoint, &origin) }
         if let value: AXValue = attribute(element, kAXSizeAttribute) { AXValueGetValue(value, .cgSize, &size) }

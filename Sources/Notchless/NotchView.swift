@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 
 final class NotchModel: ObservableObject {
@@ -6,11 +7,40 @@ final class NotchModel: ObservableObject {
     @Published var trusted = true
     @Published var hoveredID: String?
     var notch = CGSize(width: 200, height: 32)
+    @Published var movingID: String?
+    @Published var message: String?
+
+    // Settings, persisted in UserDefaults.
+    @Published var showVisible = UserDefaults.standard.object(forKey: "showVisibleItems") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showVisible, forKey: "showVisibleItems") }
+    }
+    @Published var hoverToOpen = UserDefaults.standard.bool(forKey: "hoverToOpen") {
+        didSet { UserDefaults.standard.set(hoverToOpen, forKey: "hoverToOpen"); onSettingsChanged() }
+    }
+    @Published var shortcut = Shortcut(rawValue: UserDefaults.standard.string(forKey: "shortcut") ?? "") ?? .none {
+        didSet { UserDefaults.standard.set(shortcut.rawValue, forKey: "shortcut"); onSettingsChanged() }
+    }
+    @Published var launchAtLogin = SMAppService.mainApp.status == .enabled {
+        didSet {
+            guard launchAtLogin != (SMAppService.mainApp.status == .enabled) else { return }
+            do {
+                try launchAtLogin ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
+            } catch {
+                message = "Couldn't change Launch at Login: \(error.localizedDescription)"
+                launchAtLogin = SMAppService.mainApp.status == .enabled
+            }
+        }
+    }
+
     var onSelect: (MenuExtra) -> Void = { _ in }
     var onDismiss: () -> Void = {}
+    var onSetHidden: (MenuExtra, Bool) -> Void = { _, _ in }
+    var onOpenSettings: () -> Void = {}
+    var onSettingsChanged: () -> Void = {}
 
     var hidden: [MenuExtra] { extras.filter(\.isHidden) }
-    var visible: [MenuExtra] { extras.filter { !$0.isHidden } }
+    /// Items already in the menu bar, shown in the panel only when the setting allows it.
+    var visible: [MenuExtra] { showVisible ? extras.filter { !$0.isHidden } : [] }
 
     enum Metric {
         static let tileWidth: CGFloat = 64
@@ -41,7 +71,8 @@ final class NotchModel: ObservableObject {
             body = 72
         } else {
             let gap: CGFloat = hidden.isEmpty || visible.isEmpty ? 0 : 14
-            body = 10 + sectionHeight(hidden.count) + gap + sectionHeight(visible.count) + Metric.caption
+            let empty = hidden.isEmpty && visible.isEmpty ? Metric.tileHeight + 14 : 0
+            body = 10 + sectionHeight(hidden.count) + gap + sectionHeight(visible.count) + empty + Metric.caption
         }
         return CGSize(width: width, height: notch.height + body)
     }
@@ -125,7 +156,14 @@ struct NotchRoot: View {
         HStack {
             Label("\(model.hidden.count) hidden", systemImage: "eye.slash.fill")
             Spacer(minLength: model.notch.width + 24)
-            Text("\(model.extras.count) items")
+            HStack(spacing: 8) {
+                Text("\(model.extras.count) items")
+                Button { model.onOpenSettings() } label: {
+                    Image(systemName: "gearshape.fill")
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+            }
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded))
         .foregroundStyle(.white.opacity(0.45))
@@ -139,6 +177,13 @@ struct NotchRoot: View {
         VStack(alignment: .leading, spacing: 14) {
             if !model.hidden.isEmpty {
                 section("Behind the notch", model.hidden, offset: 0)
+            }
+            if model.hidden.isEmpty && model.visible.isEmpty {
+                Text("Nothing is hidden. Everything fits in your menu bar.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: NotchModel.Metric.tileHeight)
             }
             if !model.visible.isEmpty {
                 section("In the menu bar", model.visible, offset: model.hidden.count)
@@ -167,7 +212,7 @@ struct NotchRoot: View {
 
     private var caption: some View {
         let hovered = model.extras.first { $0.id == model.hoveredID }
-        return Text(hovered?.detail ?? "Click an item to open it  ·  esc to close")
+        return Text(hovered?.detail ?? "Click to open  ·  right-click to hide or show  ·  esc to close")
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(.white.opacity(hovered == nil ? 0.28 : 0.7))
             .lineLimit(1)
@@ -203,6 +248,11 @@ struct Tile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressStyle())
+        .contextMenu {
+            Button("Open") { model.onSelect(extra) }
+            Button(extra.isHidden ? "Show in Menu Bar" : "Hide from Menu Bar") { model.onSetHidden(extra, !extra.isHidden) }
+                .disabled(!extra.canMove)
+        }
         .onHover { inside in
             if inside { model.hoveredID = extra.id } else if model.hoveredID == extra.id { model.hoveredID = nil }
         }
