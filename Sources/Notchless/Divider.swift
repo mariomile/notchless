@@ -8,6 +8,11 @@ final class Divider {
     private let symbol: NSImage
     private static let collapsedLength: CGFloat = 28
     private var isExpanded = false
+    /// Off by default: then Notchless is a plain icon and only macOS decides what overflows.
+    var isEnabled = false { didSet { refit() } }
+    /// The button's right edge, measured while collapsed. Measuring it while expanded would feed the
+    /// width back into itself, so it's only refreshed by `refit()`.
+    private var anchor: CGFloat?
     /// Extra room given back when macOS says the expanded button no longer fits.
     private var slack: CGFloat = 0
 
@@ -16,13 +21,24 @@ final class Divider {
         self.symbol = symbol
         setLength(Self.collapsedLength)
 
-        // The button's window moves whenever items to its right come and go or the menu bar changes
-        // display; re-fit then. Once the width is right, expanding again changes nothing, so this settles.
-        for name in [NSWindow.didMoveNotification, NSWindow.didChangeScreenNotification] {
-            NotificationCenter.default.addObserver(forName: name, object: item.button?.window, queue: .main) { [weak self] _ in
-                guard let self, self.isExpanded else { return }
-                self.expand()
+        // Items to its right coming and going, or the menu bar changing display, move the anchor.
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: item.button?.window,
+                                               queue: .main) { [weak self] _ in self?.refit() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.refit() }
             }
+        }
+    }
+
+    /// Collapses, measures where the button's right edge sits, then widens from there.
+    func refit() {
+        collapse()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, let window = self.item.button?.window else { return }
+            self.anchor = window.frame.maxX
+            self.expand()
         }
     }
 
@@ -43,13 +59,16 @@ final class Divider {
     }
 
     /// Widens the button so its left edge meets the notch, leaving room for macOS's « chevron.
-    /// On a screen without a notch it stops at the middle, clear of the app menus.
+    /// Only on the notched screen: elsewhere there's room, and the anchor can't be trusted while that
+    /// display's menu bar is inactive.
     func expand() {
         isExpanded = true
-        guard let window = item.button?.window, let screen = window.screen else { return }
-        let boundary = MenuExtras.notchRange(on: screen).map { screen.frame.minX + $0.upperBound + 30 }
-            ?? screen.frame.minX + screen.frame.width * 0.5
-        let length = max(Self.collapsedLength, window.frame.maxX - boundary - slack)
+        guard isEnabled, let anchor, let screen = item.button?.window?.screen,
+              let notch = MenuExtras.notchRange(on: screen) else { return }
+        let boundary = screen.frame.minX + notch.upperBound + 30
+        // Never wider than the room right of the notch minus space for the system items.
+        let maxLength = screen.frame.maxX - boundary - 160
+        let length = max(Self.collapsedLength, min(anchor - boundary - slack, maxLength))
         guard abs(item.length - length) > 1 else { return }
         setLength(length)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.backOffIfOverflowed() }

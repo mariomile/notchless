@@ -17,6 +17,7 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Tuck away items left of Notchless", isOn: $model.dividerEnabled)
                 ForEach(model.extras) { extra in
                     ItemRow(extra: extra, model: model)
                 }
@@ -27,7 +28,7 @@ struct SettingsView: View {
             } header: {
                 Text("Menu bar items")
             } footer: {
-                Text("Items left of the Notchless divider are tucked away and live in the notch. Switching one does a quick Cmd-drag across the divider for you, so the pointer jumps for a moment. You can also Cmd-drag items across the divider yourself.")
+                Text("When on, the Notchless icon widens up to the notch and everything to its left is tucked away into the notch. Switching an item does a quick Cmd-drag across the Notchless icon for you, so the pointer jumps for a moment. You can also Cmd-drag items across it yourself.")
             }
 
             Section("Opening") {
@@ -80,7 +81,10 @@ private struct ItemRow: View {
             } else if !extra.canMove {
                 Text("Pinned by macOS").font(.caption).foregroundStyle(.secondary)
             } else {
-                Toggle("Visible", isOn: Binding(get: { !extra.isHidden }, set: { model.onSetHidden(extra, !$0) }))
+                Toggle("Visible", isOn: Binding(get: { !extra.isHidden }, set: {
+                    model.dividerEnabled = true
+                    model.onSetHidden(extra, !$0)
+                }))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)

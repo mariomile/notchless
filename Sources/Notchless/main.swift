@@ -21,11 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // New status items land on the far left, which on a crowded bar means behind the notch.
-        // Seed a position next to the system items on first launch; Cmd-drag still moves it.
+        // macOS tucks away the leftmost items first when the bar is full, so Notchless has to sit on the
+        // right, next to the system items. The value is the distance from the right edge; Cmd-drag still moves it.
         let key = "NSStatusItem Preferred Position \(Self.autosaveName)"
         if UserDefaults.standard.object(forKey: key) == nil {
-            UserDefaults.standard.set(320, forKey: key)
+            UserDefaults.standard.set(5, forKey: key)
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let symbol = NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "Notchless")!
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold))!
         divider = Divider(item: statusItem, symbol: symbol)
+        divider.isEnabled = model.dividerEnabled
         if let button = statusItem.button {
             button.setAccessibilityLabel("Notchless")
             button.target = self
@@ -53,13 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.open()
         }
         applySettings()
-        DispatchQueue.main.async { self.divider.expand() }
+        DispatchQueue.main.async { self.divider.refit() }
 
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             self?.close()
             self?.applySettings()
-            self?.divider.expand()
+            self?.divider.refit()
         }
 
         if !MenuExtras.isTrusted { MenuExtras.requestTrust() }
@@ -85,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func refresh() { scan() }
 
     private func applySettings() {
+        if divider.isEnabled != model.dividerEnabled { divider.isEnabled = model.dividerEnabled }
         hotkey.register(model.shortcut)
         hoverZone.update(enabled: model.hoverToOpen,
                          screen: NSScreen.screens.first { MenuExtras.notchRange(on: $0) != nil })
@@ -120,7 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.model.movingID = nil
-                    self.divider.expand()
                     if case .failure(let failure) = result {
                         self.model.message = "\(extra.name): \(failure)"
                         if self.settingsWindow?.isVisible != true { self.openSettings() }

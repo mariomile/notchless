@@ -18,7 +18,7 @@ enum MenuBarMover {
     /// Blocking: takes about two seconds and moves the pointer. Call off the main thread.
     static func setHidden(_ hidden: Bool, _ extra: MenuExtra, divider: Divider) -> Result<Void, Failure> {
         onMain { divider.collapse() }
-        defer { DispatchQueue.main.async { divider.expand() } }
+        defer { DispatchQueue.main.async { divider.refit() } }
         usleep(450_000)
 
         let (d, visible) = onMain { (divider.frame, divider.isVisible) }

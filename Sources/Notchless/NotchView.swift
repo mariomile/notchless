@@ -20,6 +20,9 @@ final class NotchModel: ObservableObject {
     @Published var shortcut = Shortcut(rawValue: UserDefaults.standard.string(forKey: "shortcut") ?? "") ?? .none {
         didSet { UserDefaults.standard.set(shortcut.rawValue, forKey: "shortcut"); onSettingsChanged() }
     }
+    @Published var dividerEnabled = UserDefaults.standard.bool(forKey: "dividerEnabled") {
+        didSet { UserDefaults.standard.set(dividerEnabled, forKey: "dividerEnabled"); onSettingsChanged() }
+    }
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled {
         didSet {
             guard launchAtLogin != (SMAppService.mainApp.status == .enabled) else { return }
@@ -250,7 +253,10 @@ struct Tile: View {
         .buttonStyle(PressStyle())
         .contextMenu {
             Button("Open") { model.onSelect(extra) }
-            Button(extra.isHidden ? "Show in Menu Bar" : "Hide from Menu Bar") { model.onSetHidden(extra, !extra.isHidden) }
+            Button(extra.isHidden ? "Show in Menu Bar" : "Hide from Menu Bar") {
+                model.dividerEnabled = true
+                model.onSetHidden(extra, !extra.isHidden)
+            }
                 .disabled(!extra.canMove)
         }
         .onHover { inside in
