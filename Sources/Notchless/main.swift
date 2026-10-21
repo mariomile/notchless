@@ -169,7 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let divider = self.divider!
             self.scanQueue.async {
                 var failed: [String: String] = [:]
-                for _ in 0..<(total * 2) {
+                // Turning the divider on tucks away everything left of the icon, so more than `total`
+                // items may need a move; the loop stops when nothing differs from the choices.
+                for _ in 0..<(self.model.extras.count * 2) {
                     let frame = DispatchQueue.main.sync { self.model.dividerEnabled ? divider.frame : nil }
                     guard let next = MenuExtras.scan(screen: screen, divider: frame)
                         .first(where: { wanted($0) && failed[$0.id] == nil }) else { break }

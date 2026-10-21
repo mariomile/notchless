@@ -17,6 +17,12 @@ enum MenuBarMover {
 
     /// Blocking: takes about two seconds and moves the pointer. Call off the main thread.
     static func setHidden(_ hidden: Bool, _ extra: MenuExtra, divider: Divider) -> Result<Void, Failure> {
+        let screen = onMain { NSScreen.screens.first { MenuExtras.notchRange(on: $0) != nil } ?? NSScreen.screens[0] }
+        // Already where it should be? Then don't touch the bar.
+        let expanded = onMain { divider.frame }
+        if let current = MenuExtras.scan(screen: screen, divider: expanded).first(where: { $0.id == extra.id }),
+           current.isHidden == hidden { return .success(()) }
+
         onMain { divider.collapse() }
         defer { DispatchQueue.main.async { divider.refit() } }
         usleep(450_000)
@@ -25,14 +31,24 @@ enum MenuBarMover {
         guard d != .zero, visible, isMenuBarOnScreen(at: CGPoint(x: d.midX, y: d.midY)) else { return .failure(.menuBarHidden) }
 
         let frame = MenuExtras.frame(of: extra.element)
+        let chevron = MenuExtras.overflowButton()
         // With the divider collapsed, an item that's still tucked away simply doesn't fit.
-        if !hidden, !isOnBar(frame, near: d) { return .failure(.noRoom) }
+        if !hidden, !isOnBar(frame, near: d, chevron: chevron) { return .failure(.noRoom) }
+
+        // macOS only accepts a drop on another app's item, and inserts on the side of that item the
+        // pointer is on. So aim at the outer half of the divider's neighbour: the item just left of it
+        // to hide, the one just right of it (Control Centre, usually) to show.
+        let others = MenuExtras.scan(screen: screen).filter { $0.id != extra.id && isOnBar($0.frame, near: nil, chevron: chevron) }
+        let destination: CGPoint
+        if hidden, let left = others.filter({ $0.frame.maxX <= d.minX + 2 }).max(by: { $0.frame.maxX < $1.frame.maxX }) {
+            destination = CGPoint(x: left.frame.maxX - min(6, left.frame.width / 4), y: d.midY)
+        } else if !hidden, let right = others.filter({ $0.frame.minX >= d.maxX - 2 }).min(by: { $0.frame.minX < $1.frame.minX }) {
+            destination = CGPoint(x: right.frame.minX + min(6, right.frame.width / 4), y: d.midY)
+        } else {
+            destination = CGPoint(x: hidden ? d.minX - 4 : d.maxX + 4, y: d.midY)
+        }
 
         let savedCursor = CGEvent(source: nil)?.location
-        // macOS only accepts a drop on another item: the divider's left end inserts before it (hidden),
-        // its right end after it (visible). Status items are right-anchored, so the divider doesn't shift
-        // while the dragged item is lifted from either side.
-        let destination = CGPoint(x: hidden ? d.minX + 6 : d.maxX - 6, y: d.midY)
         commandDrag(from: CGPoint(x: frame.midX, y: frame.midY), to: destination)
         if let savedCursor { CGWarpMouseCursorPosition(savedCursor) }
         usleep(400_000)
@@ -47,10 +63,11 @@ enum MenuBarMover {
         Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work)
     }
 
-    /// Drawn on the same menu bar as the divider, not stacked out of sight.
-    private static func isOnBar(_ frame: CGRect, near divider: CGRect) -> Bool {
-        abs(frame.midY - divider.midY) < 20 && frame.width > 0 && frame.maxX <= divider.minX + 2
-            && (MenuExtras.overflowButton().map { frame.minX > $0.maxX - 2 } ?? true)
+    /// Drawn on the menu bar, not stacked out of sight under the chevron. With `divider`, also left of it.
+    private static func isOnBar(_ frame: CGRect, near divider: CGRect?, chevron: CGRect?) -> Bool {
+        guard frame.width > 0, chevron.map({ frame.minX > $0.maxX - 2 }) ?? true else { return false }
+        guard let divider else { return true }
+        return abs(frame.midY - divider.midY) < 20 && frame.maxX <= divider.minX + 2
     }
 
     /// The menu bar is a layer-24 window; a full-screen app takes it off screen.
